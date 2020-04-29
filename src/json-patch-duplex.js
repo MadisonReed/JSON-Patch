@@ -434,6 +434,8 @@ var jsonpatch;
     /// Apply a json-patch operation on an object tree
     function apply(tree, patches, validate = true) {
         var result = false, p = 0, plen = patches.length, patch, key;
+        let availableErrorReports = 1;
+
         while (p < plen) {
             try {
               patch = patches[p];
@@ -496,11 +498,14 @@ var jsonpatch;
                   obj = obj[key];
               }
             } catch(e) {
-                const log = new Log('json-patch-duplex.apply');
-                log.error(e, 'Session:\n', tree);
+                if (availableErrorReports) {
+                    const log = new Log('json-patch-duplex.apply');
+                    log.error(e, '\nSession:\n', tree);
+                    availableErrorReports--;
+                }
             }
-
         }
+
         return result;
     }
     jsonpatch.apply = apply;
