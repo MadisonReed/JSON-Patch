@@ -432,7 +432,7 @@ var jsonpatch;
         return true;
     }
     /// Apply a json-patch operation on an object tree
-    function apply(tree, patches, validate = true) {
+    function apply(tree, patches, validate) {
         var result = false, p = 0, plen = patches.length, patch, key;
         let availableErrorReports = 1;
 
