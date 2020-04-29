@@ -1,3 +1,4 @@
+const Log = require('Log');
 /*!
  * https://github.com/Starcounter-Jack/JSON-Patch
  * json-patch-duplex.js version: 0.5.7
@@ -431,68 +432,74 @@ var jsonpatch;
         return true;
     }
     /// Apply a json-patch operation on an object tree
-    function apply(tree, patches, validate) {
+    function apply(tree, patches, validate = true) {
         var result = false, p = 0, plen = patches.length, patch, key;
         while (p < plen) {
-            patch = patches[p];
-            p++;
-            // Find the object
-            var path = patch.path || "";
-            var keys = path.split('/');
-            var obj = tree;
-            var t = 1; //skip empty element - http://jsperf.com/to-shift-or-not-to-shift
-            var len = keys.length;
-            var existingPathFragment = undefined;
-            while (true) {
-                key = keys[t];
-                if (validate) {
-                    if (existingPathFragment === undefined) {
-                        if (obj[key] === undefined) {
-                            existingPathFragment = keys.slice(0, t).join('/');
-                        }
-                        else if (t == len - 1) {
-                            existingPathFragment = patch.path;
-                        }
-                        if (existingPathFragment !== undefined) {
-                            this.validator(patch, p - 1, tree, existingPathFragment);
-                        }
-                    }
-                }
-                t++;
-                if (key === undefined) {
-                    if (t >= len) {
-                        result = rootOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                if (_isArray(obj)) {
-                    if (key === '-') {
-                        key = obj.length;
-                    }
-                    else {
-                        if (validate && !isInteger(key)) {
-                            throw new JsonPatchError("Expected an unsigned base-10 integer value, making the new referenced value the array element with the zero-based index", "OPERATION_PATH_ILLEGAL_ARRAY_INDEX", p - 1, patch.path, patch);
-                        }
-                        key = parseInt(key, 10);
-                    }
-                    if (t >= len) {
-                        if (validate && patch.op === "add" && key > obj.length) {
-                            throw new JsonPatchError("The specified index MUST NOT be greater than the number of elements in the array", "OPERATION_VALUE_OUT_OF_BOUNDS", p - 1, patch.path, patch);
-                        }
-                        result = arrOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                else {
-                    if (key && key.indexOf('~') != -1)
-                        key = key.replace(/~1/g, '/').replace(/~0/g, '~'); // escape chars
-                    if (t >= len) {
-                        result = objOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                obj = obj[key];
+            try {
+              patch = patches[p];
+              p++;
+              // Find the object
+              var path = patch.path || "";
+              var keys = path.split('/');
+              var obj = tree;
+              var t = 1; //skip empty element - http://jsperf.com/to-shift-or-not-to-shift
+              var len = keys.length;
+              var existingPathFragment = undefined;
+              while (true) {
+                  key = keys[t];
+                  if (validate) {
+                      if (existingPathFragment === undefined) {
+                          if (obj[key] === undefined) {
+                              existingPathFragment = keys.slice(0, t).join('/');
+                          }
+                          else if (t == len - 1) {
+                              existingPathFragment = patch.path;
+                          }
+                          if (existingPathFragment !== undefined) {
+                              this.validator(patch, p - 1, tree, existingPathFragment);
+                          }
+                      }
+                  }
+                  t++;
+                  if (key === undefined) {
+                      if (t >= len) {
+                          result = rootOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  if (_isArray(obj)) {
+                      if (key === '-') {
+                          key = obj.length;
+                      }
+                      else {
+                          if (validate && !isInteger(key)) {
+                              throw new JsonPatchError("Expected an unsigned base-10 integer value, making the new referenced value the array element with the zero-based index", "OPERATION_PATH_ILLEGAL_ARRAY_INDEX", p - 1, patch.path, patch);
+                          }
+                          key = parseInt(key, 10);
+                      }
+                      if (t >= len) {
+                          if (validate && patch.op === "add" && key > obj.length) {
+                              throw new JsonPatchError("The specified index MUST NOT be greater than the number of elements in the array", "OPERATION_VALUE_OUT_OF_BOUNDS", p - 1, patch.path, patch);
+                          }
+                          result = arrOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  else {
+                      if (key && key.indexOf('~') != -1)
+                          key = key.replace(/~1/g, '/').replace(/~0/g, '~'); // escape chars
+                      if (t >= len) {
+                          result = objOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  obj = obj[key];
+              }
+            } catch(e) {
+                const log = new Log('json-patch-duplex.apply');
+                log.error(e, 'Session:\n', tree);
             }
+
         }
         return result;
     }
