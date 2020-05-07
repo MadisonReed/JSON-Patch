@@ -432,7 +432,7 @@ var jsonpatch;
         return true;
     }
     /// Apply a json-patch operation on an object tree
-    function apply(tree, patches, validate) {
+    function apply(tree, patches, validate = true) {
         var result = false, p = 0, plen = patches.length, patch, key;
         let availableErrorReports = 1;
 
@@ -458,7 +458,8 @@ var jsonpatch;
                               existingPathFragment = patch.path;
                           }
                           if (existingPathFragment !== undefined) {
-                              this.validator(patch, p - 1, tree, existingPathFragment);
+                              jsonpatch.mrValidator(patch, p - 1, tree, existingPathFragment);
+                              //this.validator(patch, p - 1, tree, existingPathFragment);
                           }
                       }
                   }
@@ -594,6 +595,24 @@ var jsonpatch;
         }
     }
     jsonpatch.validator = validator;
+
+    /**
+     * Custom validation on tree for replace
+     * @param {object} operation - operation object (patch)
+     * @param {number} index - index of operation in the sequence
+     * @param {object} [tree] - object where the operation is supposed to be applied
+     * @param {string} [existingPathFragment] - comes along with `tree`
+     */
+    function mrValidator(operation, index, tree, existingPathFragment) {
+        if (tree) {
+            if (operation.op === 'replace') {
+                if (operation.path !== existingPathFragment) {
+                    resolvePath(operation.path, existingPathFragment, tree);
+                }
+            }
+        }
+    }
+    jsonpatch.mrValidator = mrValidator;
     /**
      * Validates a sequence of operations. If `tree` parameter is provided, the sequence is additionally validated against the object tree.
      * If error is encountered, returns a JsonPatchError object
@@ -626,6 +645,59 @@ var jsonpatch;
         }
     }
     jsonpatch.validate = validate;
+
+    /**
+     * Makes a path if validation fails on OPERATION_PATH_UNRESOLVABLE
+     */
+    function resolvePath(path, existingPathFragment, tree) {
+      let entry = tree;
+      const newPathFragments = path.replace(existingPathFragment, '')
+        .split('/')
+        .filter((d) => d.length > 0); // filter out empty string in case of ["", ...]
+
+      // log if new path is trying to update 2 or more edges away from original, may wish to update cdata default structure if these show up
+      if (newPathFragments.length > 1) {
+        log.debug(`OPERATION_PATH_UNRESOLVABLE: update requested for ${path} but only ${existingPathFragment} exists. Resolving path to allow update...`);
+      }
+  
+      const existingPathFragments = existingPathFragment.split('/').filter((d) => d.length > 0);
+      if (existingPathFragments.length === 0) {
+        existingPathFragments.push(newPathFragments.splice(0, 1));
+      }
+  
+      for(let i = 0; i < existingPathFragments.length - 1; i++) {
+        entry = entry[existingPathFragments[i]];
+      }
+  
+      const edge = existingPathFragments[existingPathFragments.length -1];
+      entry[edge] = generateNode([edge, ...newPathFragments]);
+    };
+
+    function generateNode(newPathFragments) {
+      let head = null;
+      let tailKey = newPathFragments.pop();
+    
+      while(newPathFragments.length) {
+        const headKey = newPathFragments.pop(); 
+        const tail = head;
+        head = createNodeObject(tailKey);
+        head[tailKey] = tail;
+        tailKey = headKey;
+      }
+    
+      return head; 
+    };
+  
+    function createNodeObject(to) {
+      if (isInteger(to)) {
+        return [];
+      } else if (typeof to === 'string') {
+        return {};
+      } else {
+        log.error(`Failed to create node object for type: ${typeof to}\n`, to);
+        return {};
+      }
+    }; 
 })(jsonpatch || (jsonpatch = {}));
 if (typeof exports !== "undefined") {
     exports.apply = jsonpatch.apply;
@@ -637,4 +709,5 @@ if (typeof exports !== "undefined") {
     exports.validator = jsonpatch.validator;
     exports.JsonPatchError = jsonpatch.JsonPatchError;
     exports.Error = jsonpatch.Error;
+    exports.mrValidator = jsonpatch.mrValidator;
 }
