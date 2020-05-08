@@ -1,4 +1,5 @@
 const Log = require('Log');
+const log = new Log('json-patch-duplex');
 /*!
  * https://github.com/Starcounter-Jack/JSON-Patch
  * json-patch-duplex.js version: 0.5.7
@@ -684,6 +685,7 @@ var jsonpatch;
      * Helper function for mrValidator 
      */
     function resolvePath(path, existingPathFragment, tree) {
+      // existingPathFragment is a substring of path
       let entry = tree;
       const newPathFragments = path.replace(existingPathFragment, '')
         .split('/')
