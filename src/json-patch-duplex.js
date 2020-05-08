@@ -434,9 +434,10 @@ var jsonpatch;
     /// Apply a json-patch operation on an object tree
     function apply(tree, patches, validate) {
         var result = false, p = 0, plen = patches.length, patch, key;
-        const retries = {};
-        while (p < plen) {
 
+        const retries = {}; // resolvePath only needs to run once per patch 
+
+        while (p < plen) {
             try {
               patch = patches[p];
               p++;
@@ -447,6 +448,8 @@ var jsonpatch;
               var t = 1; //skip empty element - http://jsperf.com/to-shift-or-not-to-shift
               var len = keys.length;
               var existingPathFragment = undefined;
+
+              // traverse to edge node
               while (true) {
                   key = keys[t];
                   if (validate) {
@@ -458,11 +461,11 @@ var jsonpatch;
                               existingPathFragment = patch.path;
                           }
                           if (existingPathFragment !== undefined) {
-                              jsonpatch.mrValidator(patch, p - 1, tree, existingPathFragment);
-                              //this.validator(patch, p - 1, tree, existingPathFragment);
+                              jsonpatch.mrValidator(patch, p - 1, tree, existingPathFragment); // resolves tree path as necessary
+                              //this.validator(patch, p - 1, tree, existingPathFragment); commented this out in favor of mrValidator
                           }
                       }
-                      validate = false;
+                      validate = false; // reset 
                   }
                   t++;
                   if (key === undefined) {
@@ -500,19 +503,20 @@ var jsonpatch;
                   obj = obj[key];
               }
             } catch(e) {
-                if (!retries[p-1]) {
-                    retries[p-1] = 1;
+                if (!retries[p-1]) { // p value needs to go back 1
+                    retries[p-1] = 1; // mark patch number (p-1) as retried 
                     log.debug('retrying to apply patch:\n', patch);
                     validate = true;
                     p--;
                 } else {
-                    validate = false;
+                    validate = false; // reset in case anything breaks during validation steps
                 }
             }
         }
 
         return result;
     }
+
     jsonpatch.apply = apply;
     function compare(tree1, tree2) {
         var patches = [];
@@ -601,21 +605,6 @@ var jsonpatch;
     jsonpatch.validator = validator;
 
     /**
-     * Custom validation on tree for replace
-     * @param {object} operation - operation object (patch)
-     * @param {number} index - index of operation in the sequence
-     * @param {object} [tree] - object where the operation is supposed to be applied
-     * @param {string} [existingPathFragment] - comes along with `tree`
-     */
-    function mrValidator(operation, index, tree, existingPathFragment) {
-        if (tree) {
-            if (operation.path !== existingPathFragment) {
-                resolvePath(operation.path, existingPathFragment, tree);
-            }
-        }
-    }
-    jsonpatch.mrValidator = mrValidator;
-    /**
      * Validates a sequence of operations. If `tree` parameter is provided, the sequence is additionally validated against the object tree.
      * If error is encountered, returns a JsonPatchError object
      * @param sequence
@@ -649,7 +638,50 @@ var jsonpatch;
     jsonpatch.validate = validate;
 
     /**
-     * Makes a path if validation fails on OPERATION_PATH_UNRESOLVABLE
+     * Custom validator.
+     *   Some times a patch may have an operation path that hasn't been made available on the tree yet.
+     *   The default validator throws an OPERATION_PATH_UNRESOLVABLE error.
+     *   This validator calls on resolvePath to ensure that the path exists before the next patch operation executes
+     * @example
+     * tree: {
+     *    cData = {
+     *     "allRecommendations":{
+     *       "color_kit":[]
+     *     },
+     *     "bestColorMatch": null
+     *   }; 
+     * };
+     * 
+     * mrValidator({ op: "add", path: '/cData/allRecommendations/root_reboot/0/images', value: [{}, {}, {}] }, 0, tree, '/cData/allRecommendations');
+     * 
+     * tree => {
+     *   cData = {
+     *    "allRecommendations":{
+     *      "color_kit":[],
+     *      "root_reboot": [{
+     *        images: null
+     *      }]
+     *    },
+     *    "bestColorMatch": null
+     *   }; 
+     * }
+     *  
+     * @param {object} operation - operation object (patch)
+     * @param {number} index - index of operation in the sequence
+     * @param {object} [tree] - object where the operation is supposed to be applied
+     * @param {string} [existingPathFragment] - comes along with `tree`
+     */
+    function mrValidator(operation, index, tree, existingPathFragment) {
+        if (tree) {
+            if (operation.path !== existingPathFragment) {
+                resolvePath(operation.path, existingPathFragment, tree);
+            }
+        }
+    }
+    jsonpatch.mrValidator = mrValidator;
+
+    /**
+     * Helper function for mrValidator 
      */
     function resolvePath(path, existingPathFragment, tree) {
       let entry = tree;
@@ -675,6 +707,9 @@ var jsonpatch;
       entry[edge] = generateNode([edge, ...newPathFragments]);
     };
 
+    /**
+     * Helper function for mrValidator 
+     */
     function generateNode(newPathFragments) {
       let head = null;
       let tailKey = newPathFragments.pop();
@@ -690,6 +725,9 @@ var jsonpatch;
       return head; 
     };
   
+    /**
+     * Helper function for mrValidator 
+     */
     function createNodeObject(to) {
       if (isInteger(to)) {
         return [];
