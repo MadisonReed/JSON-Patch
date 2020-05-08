@@ -1,5 +1,6 @@
 const Log = require('Log');
 const log = new Log('json-patch-duplex');
+let logSessionLimit = 1;
 /*!
  * https://github.com/Starcounter-Jack/JSON-Patch
  * json-patch-duplex.js version: 0.5.7
@@ -506,6 +507,10 @@ var jsonpatch;
             } catch(e) {
                 if (!retries[p-1]) { // p value needs to go back 1
                     retries[p-1] = 1; // mark patch number (p-1) as retried 
+                    if (logSessionLimit > 0) {
+                        logSessionLimit--;
+                        log.debug('user session:\n', tree);
+                    }
                     log.debug('retrying to apply patch:\n', patch);
                     validate = true;
                     p--;
