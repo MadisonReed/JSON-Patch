@@ -432,11 +432,11 @@ var jsonpatch;
         return true;
     }
     /// Apply a json-patch operation on an object tree
-    function apply(tree, patches, validate = true) {
+    function apply(tree, patches, validate) {
         var result = false, p = 0, plen = patches.length, patch, key;
-        let availableErrorReports = 1;
-
+        const retries = {};
         while (p < plen) {
+
             try {
               patch = patches[p];
               p++;
@@ -462,6 +462,7 @@ var jsonpatch;
                               //this.validator(patch, p - 1, tree, existingPathFragment);
                           }
                       }
+                      validate = false;
                   }
                   t++;
                   if (key === undefined) {
@@ -499,10 +500,13 @@ var jsonpatch;
                   obj = obj[key];
               }
             } catch(e) {
-                if (availableErrorReports) {
-                    const log = new Log('json-patch-duplex.apply');
-                    log.error(e, '\nSession:\n', tree);
-                    availableErrorReports--;
+                if (!retries[p-1]) {
+                    retries[p-1] = 1;
+                    log.debug('retrying to apply patch:\n', patch);
+                    validate = true;
+                    p--;
+                } else {
+                    validate = false;
                 }
             }
         }
@@ -605,10 +609,8 @@ var jsonpatch;
      */
     function mrValidator(operation, index, tree, existingPathFragment) {
         if (tree) {
-            if (operation.op === 'replace') {
-                if (operation.path !== existingPathFragment) {
-                    resolvePath(operation.path, existingPathFragment, tree);
-                }
+            if (operation.path !== existingPathFragment) {
+                resolvePath(operation.path, existingPathFragment, tree);
             }
         }
     }
