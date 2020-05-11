@@ -1,3 +1,6 @@
+const Log = require('Log');
+const log = new Log('json-patch-duplex');
+let logSessionLimit = 1;
 /*!
  * https://github.com/Starcounter-Jack/JSON-Patch
  * json-patch-duplex.js version: 0.5.7
@@ -433,69 +436,93 @@ var jsonpatch;
     /// Apply a json-patch operation on an object tree
     function apply(tree, patches, validate) {
         var result = false, p = 0, plen = patches.length, patch, key;
+
+        const retries = {}; // resolvePath only needs to run once per patch 
+
         while (p < plen) {
-            patch = patches[p];
-            p++;
-            // Find the object
-            var path = patch.path || "";
-            var keys = path.split('/');
-            var obj = tree;
-            var t = 1; //skip empty element - http://jsperf.com/to-shift-or-not-to-shift
-            var len = keys.length;
-            var existingPathFragment = undefined;
-            while (true) {
-                key = keys[t];
-                if (validate) {
-                    if (existingPathFragment === undefined) {
-                        if (obj[key] === undefined) {
-                            existingPathFragment = keys.slice(0, t).join('/');
-                        }
-                        else if (t == len - 1) {
-                            existingPathFragment = patch.path;
-                        }
-                        if (existingPathFragment !== undefined) {
-                            this.validator(patch, p - 1, tree, existingPathFragment);
-                        }
+            try {
+              patch = patches[p];
+              p++;
+              // Find the object
+              var path = patch.path || "";
+              var keys = path.split('/');
+              var obj = tree;
+              var t = 1; //skip empty element - http://jsperf.com/to-shift-or-not-to-shift
+              var len = keys.length;
+              var existingPathFragment = undefined;
+
+              // traverse to edge node
+              while (true) {
+                  key = keys[t];
+                  if (validate) {
+                      if (existingPathFragment === undefined) {
+                          if (obj[key] === undefined) {
+                              existingPathFragment = keys.slice(0, t).join('/');
+                          }
+                          else if (t == len - 1) {
+                              existingPathFragment = patch.path;
+                          }
+                          if (existingPathFragment !== undefined) {
+                              jsonpatch.mrValidator(patch, p - 1, tree, existingPathFragment); // resolves tree path as necessary
+                              //this.validator(patch, p - 1, tree, existingPathFragment); commented this out in favor of mrValidator
+                          }
+                      }
+                      validate = false; // reset 
+                  }
+                  t++;
+                  if (key === undefined) {
+                      if (t >= len) {
+                          result = rootOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  if (_isArray(obj)) {
+                      if (key === '-') {
+                          key = obj.length;
+                      }
+                      else {
+                          if (validate && !isInteger(key)) {
+                              throw new JsonPatchError("Expected an unsigned base-10 integer value, making the new referenced value the array element with the zero-based index", "OPERATION_PATH_ILLEGAL_ARRAY_INDEX", p - 1, patch.path, patch);
+                          }
+                          key = parseInt(key, 10);
+                      }
+                      if (t >= len) {
+                          if (validate && patch.op === "add" && key > obj.length) {
+                              throw new JsonPatchError("The specified index MUST NOT be greater than the number of elements in the array", "OPERATION_VALUE_OUT_OF_BOUNDS", p - 1, patch.path, patch);
+                          }
+                          result = arrOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  else {
+                      if (key && key.indexOf('~') != -1)
+                          key = key.replace(/~1/g, '/').replace(/~0/g, '~'); // escape chars
+                      if (t >= len) {
+                          result = objOps[patch.op].call(patch, obj, key, tree); // Apply patch
+                          break;
+                      }
+                  }
+                  obj = obj[key];
+              }
+            } catch(e) {
+                if (!retries[p-1]) { // p value needs to go back 1
+                    retries[p-1] = 1; // mark patch number (p-1) as retried 
+                    if (logSessionLimit > 0) {
+                        logSessionLimit--;
+                        log.debug('user session:\n', tree);
                     }
+                    log.debug('retrying to apply patch:\n', patch);
+                    validate = true;
+                    p--;
+                } else {
+                    validate = false; // reset in case anything breaks during validation steps
                 }
-                t++;
-                if (key === undefined) {
-                    if (t >= len) {
-                        result = rootOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                if (_isArray(obj)) {
-                    if (key === '-') {
-                        key = obj.length;
-                    }
-                    else {
-                        if (validate && !isInteger(key)) {
-                            throw new JsonPatchError("Expected an unsigned base-10 integer value, making the new referenced value the array element with the zero-based index", "OPERATION_PATH_ILLEGAL_ARRAY_INDEX", p - 1, patch.path, patch);
-                        }
-                        key = parseInt(key, 10);
-                    }
-                    if (t >= len) {
-                        if (validate && patch.op === "add" && key > obj.length) {
-                            throw new JsonPatchError("The specified index MUST NOT be greater than the number of elements in the array", "OPERATION_VALUE_OUT_OF_BOUNDS", p - 1, patch.path, patch);
-                        }
-                        result = arrOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                else {
-                    if (key && key.indexOf('~') != -1)
-                        key = key.replace(/~1/g, '/').replace(/~0/g, '~'); // escape chars
-                    if (t >= len) {
-                        result = objOps[patch.op].call(patch, obj, key, tree); // Apply patch
-                        break;
-                    }
-                }
-                obj = obj[key];
             }
         }
+
         return result;
     }
+
     jsonpatch.apply = apply;
     function compare(tree1, tree2) {
         var patches = [];
@@ -582,6 +609,7 @@ var jsonpatch;
         }
     }
     jsonpatch.validator = validator;
+
     /**
      * Validates a sequence of operations. If `tree` parameter is provided, the sequence is additionally validated against the object tree.
      * If error is encountered, returns a JsonPatchError object
@@ -614,6 +642,109 @@ var jsonpatch;
         }
     }
     jsonpatch.validate = validate;
+
+    /**
+     * Custom validator.
+     *   Some times a patch may have an operation path that hasn't been made available on the tree yet.
+     *   The default validator throws an OPERATION_PATH_UNRESOLVABLE error.
+     *   This validator calls on resolvePath to ensure that the path exists before the next patch operation executes
+     * @example
+     * tree: {
+     *    cData = {
+     *     "allRecommendations":{
+     *       "color_kit":[]
+     *     },
+     *     "bestColorMatch": null
+     *   }; 
+     * };
+     * 
+     * mrValidator({ op: "add", path: '/cData/allRecommendations/root_reboot/0/images', value: [{}, {}, {}] }, 0, tree, '/cData/allRecommendations');
+     * 
+     * tree => {
+     *   cData = {
+     *    "allRecommendations":{
+     *      "color_kit":[],
+     *      "root_reboot": [{
+     *        images: null
+     *      }]
+     *    },
+     *    "bestColorMatch": null
+     *   }; 
+     * }
+     *  
+     * @param {object} operation - operation object (patch)
+     * @param {number} index - index of operation in the sequence
+     * @param {object} [tree] - object where the operation is supposed to be applied
+     * @param {string} [existingPathFragment] - comes along with `tree`
+     */
+    function mrValidator(operation, index, tree, existingPathFragment) {
+        if (tree) {
+            if (operation.path !== existingPathFragment) {
+                resolvePath(operation.path, existingPathFragment, tree);
+            }
+        }
+    }
+    jsonpatch.mrValidator = mrValidator;
+
+    /**
+     * Helper function for mrValidator 
+     */
+    function resolvePath(path, existingPathFragment, tree) {
+      // existingPathFragment is a substring of path
+      let entry = tree;
+      const newPathFragments = path.replace(existingPathFragment, '')
+        .split('/')
+        .filter((d) => d.length > 0); // filter out empty string in case of ["", ...]
+
+      // log if new path is trying to update 2 or more edges away from original, may wish to update cdata default structure if these show up
+      if (newPathFragments.length > 1) {
+        log.debug(`OPERATION_PATH_UNRESOLVABLE: update requested for ${path} but only ${existingPathFragment} exists. Resolving path to allow update...`);
+      }
+  
+      const existingPathFragments = existingPathFragment.split('/').filter((d) => d.length > 0);
+      if (existingPathFragments.length === 0) {
+        existingPathFragments.push(newPathFragments.splice(0, 1));
+      }
+  
+      for(let i = 0; i < existingPathFragments.length - 1; i++) {
+        entry = entry[existingPathFragments[i]];
+      }
+  
+      const edge = existingPathFragments[existingPathFragments.length -1];
+      entry[edge] = generateNode([edge, ...newPathFragments]);
+    };
+
+    /**
+     * Helper function for mrValidator 
+     */
+    function generateNode(newPathFragments) {
+      let head = null;
+      let tailKey = newPathFragments.pop();
+    
+      while(newPathFragments.length) {
+        const headKey = newPathFragments.pop(); 
+        const tail = head;
+        head = createNodeObject(tailKey);
+        head[tailKey] = tail;
+        tailKey = headKey;
+      }
+    
+      return head; 
+    };
+  
+    /**
+     * Helper function for mrValidator 
+     */
+    function createNodeObject(to) {
+      if (isInteger(to)) {
+        return [];
+      } else if (typeof to === 'string') {
+        return {};
+      } else {
+        log.error(`Failed to create node object for type: ${typeof to}\n`, to);
+        return {};
+      }
+    }; 
 })(jsonpatch || (jsonpatch = {}));
 if (typeof exports !== "undefined") {
     exports.apply = jsonpatch.apply;
@@ -625,4 +756,5 @@ if (typeof exports !== "undefined") {
     exports.validator = jsonpatch.validator;
     exports.JsonPatchError = jsonpatch.JsonPatchError;
     exports.Error = jsonpatch.Error;
+    exports.mrValidator = jsonpatch.mrValidator;
 }
